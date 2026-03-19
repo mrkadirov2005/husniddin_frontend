@@ -1,0 +1,702 @@
+import React, {
+  useEffect,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
+import { useDispatch, useSelector } from "react-redux";
+import type { Product } from "../../../types/types";
+import {
+  accessTokenFromStore,
+  getAuthFromStore,
+  getSingleProductFromStore,
+  getBranchesFromStore,
+} from "../../redux/selectors";
+import type { AppDispatch } from "../../redux/store";
+import { closeSingleProduct } from "../../redux/slices/products/productsreducer";
+import { UpdateProductThunk } from "../../redux/slices/products/thunks/updateProductThunk";
+import { createSingleProductThunk } from "../../redux/slices/products/thunks/createProduct";
+import {
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  LinearProgress,
+  Tooltip,
+  Chip,
+  Alert,
+  Tabs,
+  Tab,
+  Box,
+} from "@mui/material";
+import { Close,Save } from "@mui/icons-material";
+import { FiAlertCircle, FiCheckCircle } from "react-icons/fi";
+import { Copy } from "lucide-react";
+import { calculateProfit } from "./components/helpers";
+
+interface Props {
+  type: "add" | "edit" | "idle";
+}
+
+interface FormErrors {
+  [key: string]: string;
+}
+
+const UNIT_OPTIONS = [
+  { id: "pcs", name: "Dona (pcs)" },
+  { id: "kg", name: "Kilogram (kg)" },
+  { id: "t", name: "Tonna (t)" },
+  { id: "l", name: "Litr (l)" },
+];
+
+const normalizeUnit = (unit?: string) => {
+  const normalized = (unit || "pcs").toLowerCase();
+  return normalized === "л" ? "l" : normalized;
+};
+
+export default function UpdateProductForm({ type }: Props) {
+  const dispatch = useDispatch<AppDispatch>();
+
+  const product = useSelector(getSingleProductFromStore);
+  const token = useSelector(accessTokenFromStore);
+  const authData = useSelector(getAuthFromStore);
+  const branches = useSelector(getBranchesFromStore).branches;
+
+  const [form, setForm] = useState<any>(null);
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [tabValue, setTabValue] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [originalForm, setOriginalForm] = useState<Product | null>(null);
+
+  // =========================
+  // INIT FORM
+  // =========================
+  useEffect(() => {
+    if (type === "edit" && product) {
+      const editForm = {
+        ...product,
+        scale: 1,
+        unit: normalizeUnit(product.unit),
+        img_url: "",
+        expire_date: "",
+        brand_id: "",
+        branch: 0,
+      };
+      setForm(editForm);
+      setOriginalForm(JSON.parse(JSON.stringify(editForm)));
+    }
+
+    if (type === "add") {
+      const addForm = {
+        id: "",
+        name: "",
+        scale: 1,
+        unit: "pcs",
+        img_url: "",
+        availability: 0,
+        total: 0,
+        receival_date: new Date().toISOString().slice(0, 16),
+        expire_date: "",
+        net_price: 0,
+        sell_price: 0,
+        supplier: "",
+        cost_price: 0,
+        last_restocked: new Date().toISOString().slice(0, 16),
+        location: "",
+        description: "",
+        brand_id: "",
+        category_id: null,
+        shop_id: authData.user?.shop_id ?? "",
+        is_active: true,
+        is_expired: false,
+        createdat: "",
+        updatedat: "",
+        branch: 0,
+      };
+      setForm(addForm);
+      setOriginalForm(null);
+    }
+
+    if (type === "idle") {
+      setForm(null);
+    }
+  }, [type, product, authData.user?.shop_id, branches]);
+
+  if (!form) return null;
+
+  // =========================
+  // VALIDATION
+  // =========================
+  const validateForm = (): boolean => {
+    const newErrors: FormErrors = {};
+
+    if (!form.name?.trim()) {
+      newErrors.name = "Mahsulot nomi majburiy";
+    }
+    if (form.sell_price <= 0) {
+      newErrors.sell_price = "Sotish narxi 0 dan katta bo'lishi kerak";
+    }
+    if (form.availability < 0) {
+      newErrors.availability = "Mavjudlik manfiy bo'lishi mumkin emas";
+    }
+    if (form.total < 0) {
+      newErrors.total = "Jami manfiy bo'lishi mumkin emas";
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  // =========================
+  // HANDLERS
+  // =========================
+  const handleChange = (
+    e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) => {
+    const { name, value, type } = e.target;
+
+    setForm((prev: any) => ({
+      ...prev!,
+      [name]: type === "number" ? (value === "" ? "" : Number(value)) : value,
+    }));
+
+    // Clear error for this field
+    if (errors[name]) {
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        delete newErrors[name];
+        return newErrors;
+      });
+    }
+  };
+
+  const handleSelectChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    const { name, value } = e.target;
+
+    setForm((prev: any) => ({
+      ...prev!,
+      [name]: value === "" ? null : value,
+    }));
+
+    if (errors[name]) {
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        delete newErrors[name];
+        return newErrors;
+      });
+    }
+  };
+
+  const handleCheckbox = (e: ChangeEvent<HTMLInputElement>) => {
+    setForm((prev: any) => ({
+      ...prev!,
+      is_active: e.target.checked,
+    }));
+  };
+
+  // =========================
+  // AUTO CALCULATE PROFIT
+  // =========================
+  const profit = calculateProfit({
+    sell_price: form.sell_price,
+    net_price: form.net_price,
+    cost_price: form.cost_price as number,
+  });
+  const profitMargin =
+    form.sell_price > 0
+      ? ((profit / form.sell_price) * 100).toFixed(1)
+      : 0;
+
+  // =========================
+  // SUBMIT
+  // =========================
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+
+    if (!validateForm()) {
+      return;
+    }
+
+    setIsLoading(true);
+
+    const payload: Product = {
+      ...form,
+      scale: 1,
+      unit: normalizeUnit(form.unit),
+      img_url: "",
+      expire_date: "",
+      brand_id: "",
+      branch:0 ,
+      availability: form.availability === "" ? 0 : Number(form.availability),
+      total: form.total === "" ? 0 : Number(form.total),
+      net_price: form.net_price === "" ? 0 : Number(form.net_price),
+      sell_price: form.sell_price === "" ? 0 : Number(form.sell_price),
+      cost_price: form.cost_price === "" || form.cost_price == null ? null : Number(form.cost_price),
+      supplier: form.supplier || null,
+      description: form.description || null,
+      location: form.location || null,
+      receival_date: form.receival_date || null,
+      last_restocked: form.last_restocked || null,
+      category_id: form.category_id || null,
+      shop_id: form.shop_id || null,
+    };
+
+    try {
+      if (type === "edit") {
+        await dispatch(UpdateProductThunk({ product: payload, token })).unwrap();
+      }
+
+      if (type === "add") {
+        await dispatch(createSingleProductThunk({ product: payload, token })).unwrap();
+      }
+
+      dispatch(closeSingleProduct());
+    } catch (error) {
+      console.error("Error saving product:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // =========================
+  // DUPLICATE PRODUCT
+  // =========================
+  const handleDuplicate = () => {
+    setForm((prev: any) => ({
+      ...prev!,
+      id: "",
+      name: `${prev!.name} (Copy)`,
+      createdat: "",
+      updatedat: "",
+    }));
+  };
+
+  // =========================
+  // RESET FORM
+  // =========================
+  const handleReset = () => {
+    if (originalForm) {
+      setForm(JSON.parse(JSON.stringify(originalForm)));
+    }
+    setErrors({});
+  };
+
+  // =========================
+  // DETECT CHANGES
+  // =========================
+  const hasChanges = originalForm
+    ? JSON.stringify(form) !== JSON.stringify(originalForm)
+    : true;
+
+  // =========================
+  // RENDER
+  // =========================
+  return (
+    <Dialog
+      open={type !== "idle"}
+      onClose={() => dispatch(closeSingleProduct())}
+      maxWidth="sm"
+      fullWidth
+      PaperProps={{
+        style: {
+          borderRadius: "12px",
+          boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)",
+        },
+      }}
+    >
+      {isLoading && <LinearProgress />}
+
+      {/* HEADER */}
+      <DialogTitle
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          background:
+            type === "add"
+              ? "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
+              : "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+          color: "white",
+          fontWeight: "bold",
+          fontSize: "1.5rem",
+        }}
+      >
+        <div className="flex items-center gap-2">
+          <Box
+            sx={{
+              background: "rgba(255,255,255,0.2)",
+              padding: "8px",
+              borderRadius: "8px",
+            }}
+          >
+            {type === "add" ? "✨" : "✏️"}
+          </Box>
+          {type === "add" ? "Yangi mahsulot qo'shish" : "Mahsulotni tahrirlash"}
+        </div>
+        <button
+          onClick={() => dispatch(closeSingleProduct())}
+          className="text-white hover:bg-white/20 p-1 rounded-lg transition-colors"
+        >
+          <Close />
+        </button>
+      </DialogTitle>
+
+      {/* TABS */}
+      <Box
+        sx={{
+          borderBottom: 1,
+          borderColor: "divider",
+          background: "#f9fafb",
+        }}
+      >
+        <Tabs
+          value={tabValue}
+          onChange={(_, value) => setTabValue(value)}
+          sx={{
+            "& .MuiTab-root": {
+              textTransform: "none",
+              fontSize: "0.95rem",
+              fontWeight: 500,
+            },
+          }}
+        >
+          <Tab label="Асосий ма'лумот" />
+          <Tab label="Нархлар" />
+          <Tab label="Омбор & Саналар" />
+          <Tab label="Қўшимча" />
+        </Tabs>
+      </Box>
+
+      <DialogContent sx={{ pt: 3 }}>
+        {/* ALERTS */}
+        {type === "edit" && !form.is_active && (
+          <Alert
+            severity="warning"
+            sx={{ mb: 2 }}
+            icon={<FiAlertCircle />}
+          >
+            Бу маҳсулот фаол емас деб белгиланган
+          </Alert>
+        )}
+
+        {Object.keys(errors).length > 0 && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            Илтимос {Object.keys(errors).length} та хатоларни тузатиб аринг
+          </Alert>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          {/* TAB 0: BASIC INFO */}
+          {tabValue === 0 && (
+            <div className="space-y-4">
+              <FormField
+                label="Маҳсулот номи"
+                name="name"
+                value={form.name}
+                onChange={handleChange}
+                error={errors.name}
+                required
+              />
+            </div>
+          )}
+
+          {/* TAB 1: PRICING */}
+          {tabValue === 1 && (
+            <div className="space-y-4">
+              <FormField
+                label="Харажат нархи"
+                name="cost_price"
+                type="number"
+                step="0.01"
+                value={form.cost_price ?? ""}
+                onChange={handleChange}
+              />
+
+              <FormField
+                label="Сотиш нархи (Чакана)"
+                name="sell_price"
+                type="number"
+                step="0.01"
+                value={form.sell_price ?? ""}
+                onChange={handleChange}
+                error={errors.sell_price}
+                required
+              />
+
+              {/* PROFIT CALCULATOR */}
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg p-4 space-y-3">
+                <h4 className="font-semibold text-green-900 flex items-center gap-2">
+                  <FiCheckCircle /> Фойда хисоботи
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-xs text-green-700 font-medium">
+                      Бирлик фойдаси
+                    </p>
+                    <p className="text-lg font-bold text-green-900">
+                      {profit.toFixed(2)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-green-700 font-medium">
+                      Фойда фоизи
+                    </p>
+                    <p className="text-lg font-bold text-green-900">
+                      {profitMargin}%
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: STOCK & DATES */}
+          {tabValue === 2 && (
+            <div className="space-y-4">
+              <SelectField
+                label="Ўлчов бирлиги"
+                name="unit"
+                value={form.unit ?? "pcs"}
+                onChange={handleSelectChange}
+                options={UNIT_OPTIONS}
+              />
+
+              <FormField
+                label="Ҳозирги омбор"
+                name="availability"
+                type="number"
+                value={form.availability ?? ""}
+                onChange={handleChange}
+                error={errors.availability}
+              />
+
+              <FormField
+                label="Жами миқдори"
+                name="total"
+                type="number"
+                value={form.total ?? ""}
+                onChange={handleChange}
+                error={errors.total}
+              />
+
+              {form.availability !== null && form.total !== null && (
+                <Chip
+                  label={`Ombor holati: ${form.availability}/${form.total} ${form.unit || "pcs"}`}
+                  variant="outlined"
+                  color={form.availability > 0 ? "success" : "error"}
+                  sx={{ width: "100%", py: 3 }}
+                />
+              )}
+
+              <FormField
+                label="Қабул қилиш санаси"
+                name="receival_date"
+                type="datetime-local"
+                value={form.receival_date as string}
+                onChange={handleChange}
+              />
+              <FormField
+                label="Охирги тўлдириш"
+                name="last_restocked"
+                type="datetime-local"
+                value={form.last_restocked as string}
+                onChange={handleChange}
+              />
+            </div>
+          )}
+
+          {/* TAB 3: ADDITIONAL */}
+          {tabValue === 3 && (
+            <div className="space-y-4">
+              <FormField
+                label="Таклиф қилувчи"
+                name="supplier"
+                value={form.supplier ?? ""}
+                onChange={handleChange}
+              />
+
+              <FormField
+                label="Жойлашуви/Склад"
+                name="location"
+                value={form.location ?? ""}
+                onChange={handleChange}
+              />
+
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Та'риф
+                </label>
+                <textarea
+                  name="description"
+                  value={form.description ?? ""}
+                  onChange={handleChange}
+                  placeholder="Маҳсулот тафсилотлари, хусусиятлари, фойдаланиш кўрсатмалари..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-24"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <input
+                  type="checkbox"
+                  id="is_active"
+                  checked={form.is_active}
+                  onChange={handleCheckbox}
+                  className="w-4 h-4 rounded"
+                />
+                <label
+                  htmlFor="is_active"
+                  className="text-sm font-medium text-blue-900"
+                >
+                  Маҳсулот фаол
+                </label>
+              </div>
+
+              {type === "edit" && (
+                <div className="space-y-2 text-xs text-gray-500 p-2 bg-gray-50 rounded-lg border border-gray-200">
+                  <p>
+                    <strong>Яратилган:</strong>{" "}
+                    {form.createdat
+                      ? new Date(form.createdat).toLocaleString()
+                      : "Yo'q"}
+                  </p>
+                  <p>
+                    <strong>Янгиланган:</strong>{" "}
+                    {form.updatedat
+                      ? new Date(form.updatedat).toLocaleString()
+                      : "Yo'q"}
+                  </p>
+                  <p>
+                    <strong>ИД:</strong> {form.id}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </form>
+      </DialogContent>
+
+      {/* ACTIONS */}
+      <DialogActions
+        sx={{
+          p: 2,
+          background: "#f9fafb",
+          borderTop: "1px solid #e5e7eb",
+        }}
+      >
+        <div className="w-full flex items-center justify-between">
+          <div className="flex gap-2">
+            {type === "edit" && (
+              <Tooltip title="Бу маҳсулотни такрорлаш">
+                <Button
+                  onClick={handleDuplicate}
+                  startIcon={<Copy />}
+                  variant="outlined"
+                  size="small"
+                >
+                  Такрорлаш
+                </Button>
+              </Tooltip>
+            )}
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              onClick={handleReset}
+              disabled={!hasChanges}
+              variant="outlined"
+              size="small"
+            >
+              Тозалаш
+            </Button>
+
+            <Button
+              onClick={() => dispatch(closeSingleProduct())}
+              variant="outlined"
+              size="small"
+            >
+              Бекор қилиш
+            </Button>
+
+            <Button
+              onClick={handleSubmit}
+              disabled={isLoading || !hasChanges}
+              variant="contained"
+              startIcon={<Save />}
+              size="small"
+            >
+              {isLoading
+                ? "Saqlanmoqda..."
+                : type === "add"
+                ? "Mahsulot yaratish"
+                : "Mahsulotni yangilash"}
+            </Button>
+          </div>
+        </div>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// =========================
+// FORM FIELD COMPONENT
+// =========================
+interface FormFieldProps
+  extends React.InputHTMLAttributes<HTMLInputElement> {
+  label: string;
+  error?: string;
+}
+
+const FormField = ({ label, error, ...props }: FormFieldProps) => (
+  <div className="space-y-1">
+    <label className="block text-sm font-medium text-gray-700">
+      {label}
+      {props.required && <span className="text-red-500">*</span>}
+    </label>
+    <input
+      {...props}
+      className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-colors ${
+        error
+          ? "border-red-300 focus:ring-red-500 bg-red-50"
+          : "border-gray-300 focus:ring-blue-500"
+      }`}
+    />
+    {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
+  </div>
+);
+
+// =========================
+// SELECT FIELD COMPONENT
+// =========================
+interface SelectFieldProps
+  extends React.SelectHTMLAttributes<HTMLSelectElement> {
+  label: string;
+  options: Array<{ id: string | number; name: string }>;
+  error?: string;
+}
+
+const SelectField = ({ label, options, error, ...props }: SelectFieldProps) => (
+  <div className="space-y-1">
+    <label className="block text-sm font-medium text-gray-700">
+      {label}
+      {props.required && <span className="text-red-500">*</span>}
+    </label>
+    <select
+      {...props}
+      className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 transition-colors ${
+        error
+          ? "border-red-300 focus:ring-red-500 bg-red-50"
+          : "border-gray-300 focus:ring-blue-500"
+      }`}
+    >
+      <option value="">Танланг {label.toLowerCase()}</option>
+      {options.map((opt) => (
+        <option key={opt.id} value={opt.id}>
+          {opt.name}
+        </option>
+      ))}
+    </select>
+    {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
+  </div>
+);

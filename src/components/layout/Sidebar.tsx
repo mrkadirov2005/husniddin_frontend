@@ -1,0 +1,127 @@
+import { useSelector } from "react-redux";
+import { Link, useLocation } from "react-router-dom";
+import { getAuthFromStore, getUserFromStore } from "../../redux/selectors";
+import {
+  AutoGraph,
+  BookmarkAddRounded,
+  MonetizationOn,
+  ProductionQuantityLimits,
+} from "@mui/icons-material";
+import { FaUser } from "react-icons/fa";
+import { motion } from "framer-motion";
+import { MinusSquareIcon, Store, Truck, DollarSign } from "lucide-react";
+
+export default function Sidebar({
+  collapsed,
+  setCollapsed,
+}: {
+  collapsed: boolean;
+  setCollapsed: (v: boolean) => void;
+}) {
+  const location = useLocation();
+  const authData = useSelector(getAuthFromStore);
+  const user = useSelector(getUserFromStore);
+
+  const getUserDisplayName = () => {
+    if (!user) return "User";
+    const admin = user as any;
+    return (
+      `${admin.first_name || admin.name || ""} ${admin.last_name || admin.lastname || ""}`.trim() ||
+      admin.name ||
+      admin.uuid ||
+      "User"
+    );
+  };
+
+  const isActive = (path: string) =>
+    path === "/" ? location.pathname === "/" : location.pathname.startsWith(path);
+
+  const MenuItem = ({ to, icon, label }: any) => (
+    <Link
+      to={to}
+      className={`group flex items-center gap-3 px-3 py-2 rounded-xl transition-all duration-200 ${
+        isActive(to)
+          ? "bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow"
+          : "text-gray-300 hover:bg-gray-700"
+      }`}
+    >
+      <span className="text-lg opacity-90 group-hover:opacity-100">{icon}</span>
+      {!collapsed && <span className="text-sm font-medium">{label}</span>}
+    </Link>
+  );
+
+  return (
+    <motion.aside
+      animate={{ width: collapsed ? 72 : 260 }}
+      className="bg-gray-900 text-white h-screen fixed left-0 top-0 p-3 flex flex-col shadow-xl z-50"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        {!collapsed && (
+          <div className="text-sm font-semibold truncate">
+            {getUserDisplayName()}
+          </div>
+        )}
+        <button
+          onClick={() => setCollapsed(!collapsed)}
+          className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 transition"
+          aria-label="Тоггле сидебар"
+        >
+          {collapsed ? ">" : "<"}
+        </button>
+      </div>
+
+      {/* Navigation */}
+      <nav className="flex-1 space-y-1">
+        {authData.isSuperAdmin && (
+          <MenuItem to="/cheque" icon={<AutoGraph />} label="Накладная" />
+        )}
+
+        <MenuItem to="/sales" icon={<MonetizationOn />} label="Савдо" />
+          <MenuItem
+            to="/saleboard"
+            icon={<BookmarkAddRounded />}
+            label="Савдоларим"
+          />
+
+        <MenuItem
+          to="/products"
+          icon={<ProductionQuantityLimits />}
+          label="Маҳсулотлар"
+        />
+
+       
+       
+
+          <MenuItem
+            to="/debts"
+            icon={<MinusSquareIcon />}
+            label="Қарздорлар"
+          />
+           <MenuItem
+            to="/wagons"
+            icon={<Truck />}
+            label="Вагонлар"
+          />
+          <MenuItem
+            to="/finance"
+            icon={<DollarSign />}
+            label="Молия"
+          />
+          { authData.isSuperAdmin && (
+            <MenuItem
+            to="/backup"
+            icon={<Store />}
+            label="Захиралаш"
+          />
+          )}
+        
+      </nav>
+
+      {/* Footer */}
+      <div className="pt-3 border-t border-gray-700">
+        <MenuItem to="/profile" icon={<FaUser />} label="Профиле" />
+      </div>
+    </motion.aside>
+  );
+}
