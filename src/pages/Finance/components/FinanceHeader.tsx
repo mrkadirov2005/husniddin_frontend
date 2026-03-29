@@ -4,7 +4,9 @@ interface FinanceHeaderProps {
   onSearchChange: (query: string) => void;
   searchQuery: string;
   source: "wagons" | "debts" | "myDebts" | "valyutchik";
-  onSourceChange: (source: "wagons" | "debts" | "myDebts" | "valyutchik") => void;
+  onSourceChange: (
+    source: "wagons" | "debts" | "myDebts" | "valyutchik"
+  ) => void;
   onAddMyDebt: () => void;
 }
 
